@@ -448,6 +448,16 @@ class StatefulProcessorApiClient:
         pandas_df = convert_pandas_using_numpy_type(
             pd.DataFrame(state, columns=column_names), schema
         )
+        # Fix for SPARK-51587: Handle timestamp columns to ensure consistent timezone representation
+        # before Arrow serialization to prevent "UNSUPPORTED_ARROWTYPE" errors with Timestamp(NANOSECOND, null)
+        for field in schema.fields:
+            if field.dataType.typeName() == "timestamp":
+                col_name = field.name
+                if col_name in pandas_df.columns and not pandas_df[col_name].empty:
+                    # Make timestamps timezone-naive if they have timezone info
+                    if pandas_df[col_name].dtype.kind == 'M' and hasattr(pandas_df[col_name].dtype, 'tz'):
+                        pandas_df[col_name] = pandas_df[col_name].dt.tz_localize(None)
+
         batch = pa.RecordBatch.from_pandas(pandas_df)
         self.serializer.dump_stream(iter([batch]), self.sockfile)
         self.sockfile.flush()

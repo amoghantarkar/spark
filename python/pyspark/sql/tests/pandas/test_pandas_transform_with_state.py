@@ -413,6 +413,81 @@ class TransformWithStateInPandasTestsMixin:
             self.assertTrue(q.exception() is None)
         finally:
             input_dir.cleanup()
+    
+    def test_list_state_with_timestamps(self):
+      """Test that ListState works correctly with timestamp fields (SPARK-51587)."""
+      import pandas as pd
+      from datetime import datetime
+
+      # Set up state handler with a timestamp schema
+      state_handler = self.state_handler
+
+      # Define schema with timestamp for list state
+      ts_schema = "timestamp_col TIMESTAMP, value STRING"
+
+      # Create test data with timestamps
+      current_time = datetime.now()
+      test_data = [
+          (current_time, "value1"),
+          (current_time, "value2"),
+          (current_time, "value3")
+      ]
+
+      # Test with list state
+      list_state = state_handler.get_list_state("ts_list_state", ts_schema)
+
+      # First, append values one by one
+      for item in test_data:
+          list_state.append_value(item)
+
+      # Then append multiple values at once to trigger the multiple state data case
+      list_state.append_list(test_data)
+
+      # Verify we can read back all values
+      result = []
+      for item in list_state:
+          result.append(item)
+
+      # We should have 6 items (3 from individual appends + 3 from batch append)
+      self.assertEqual(len(result), 6)
+
+      # Verify the timestamp values were preserved correctly
+      for i in range(6):
+          # Check timestamp type and value
+          self.assertIsInstance(result[i][0], datetime)
+          # Check string value
+          if i < 3:
+              self.assertEqual(result[i][1], test_data[i][1])
+          else:
+              self.assertEqual(result[i][1], test_data[i-3][1])
+
+      # Clear state
+      list_state.clear()
+      self.assertFalse(list_state.exists())
+
+      # Test with multiple timestamp columns
+      multi_ts_schema = "ts1 TIMESTAMP, ts2 TIMESTAMP, value STRING"
+      multi_list_state = state_handler.get_list_state("multi_ts_list_state", multi_ts_schema)
+
+      # Create test data with multiple timestamps
+      multi_ts_data = [
+          (current_time, current_time, "A"),
+          (current_time, current_time, "B")
+      ]
+
+      # Test batch append
+      multi_list_state.append_list(multi_ts_data)
+
+      # Verify values
+      multi_result = []
+      for item in multi_list_state:
+          multi_result.append(item)
+
+      self.assertEqual(len(multi_result), 2)
+      self.assertIsInstance(multi_result[0][0], datetime)
+      self.assertIsInstance(multi_result[0][1], datetime)
+      self.assertEqual(multi_result[0][2], "A")
+      self.assertEqual(multi_result[1][2], "B")
 
     def _test_transform_with_state_in_pandas_proc_timer(self, stateful_processor, check_results):
         input_path = tempfile.mkdtemp()
